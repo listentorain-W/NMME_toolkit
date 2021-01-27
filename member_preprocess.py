@@ -2,6 +2,7 @@ import xarray as xr
 import pandas as pd
 import pathlib as pl
 import numpy as np
+import pysnooper
 
 def lead_time_leap(time_array, lead_num = 0):
     """
@@ -48,12 +49,15 @@ def _interp(da):
     
     return da_remap
 
-def data_slice(ds, info, region, bgning = '1982-01', ending = '2018-12'):
+# @pysnooper.snoop(watch_explode=('lead_t_slice.shape'))
+def data_slice(ds, info, region, bgning = '1983-01', ending = '2018-12'):
     latS, latN = region[0], region[1]
     lonW, lonE = region[2], region[3]
     ds = ds.sel(lat = slice(latS, latN), 
                 lon = slice(lonW, lonE))
-
+    
+    t_test = xr.cftime_range(start = bgning, end = ending, freq = 'MS')
+    
     lead_store = []
     lead_coord = ds.lead_time
     for l_ in lead_coord:
@@ -62,6 +66,13 @@ def data_slice(ds, info, region, bgning = '1982-01', ending = '2018-12'):
         lead_data = ds.sel(lead_time = l_)
         lead_data.coords['start_time'] = time_series
         lead_t_slice = lead_data.sel(start_time = slice(bgning, ending))
+        t_real = lead_t_slice.sizes['start_time']
+        
+        assert t_real == len(t_test), \
+        f'data time {t_real} is shorter than needed slice time {len(t_test)}'
+        
+        # 用于检验时间数据切割是否相等
+        # print(lead_t_slice.shape)
         lead_store.append(lead_t_slice)
         
     ds_concat = xr.concat(lead_store, dim = 'lead_time')
@@ -69,7 +80,7 @@ def data_slice(ds, info, region, bgning = '1982-01', ending = '2018-12'):
     
     return ds_concat
     
-    
+
 def preprocess(info, file_path, save_path, region, bgning, ending):
     
     var_name = 'sst'
@@ -80,10 +91,11 @@ def preprocess(info, file_path, save_path, region, bgning, ending):
     
     member_store = []
     for i in range(1, info['file_num'].values[0] + 1):
-        sst = xr.open_dataset(file_path + info['NAME'].values[0] + f'_{i}.nc', decode_times = False)
+        sst = xr.open_dataset(file_path + info['NAME'].values[0] + f'_{i}.nc', decode_times = False)['sst']
         
         # nc data with coordinate
         sst_co = coords_rename(sst, info)
+        
         co_file = pl.Path(save_path + 'origin_' + info['NAME'].values[0] + f'_{i}.nc')
         if not co_file.is_file():
             sst_co.to_netcdf(co_file, encoding=encoding)
@@ -92,12 +104,14 @@ def preprocess(info, file_path, save_path, region, bgning, ending):
         # using dask to parallel compute in interp
         sst_interp = sst_co.chunk({'lead_time': 1})
         sst_interp = _interp(sst_interp)
+        
         interp_file = pl.Path(save_path + 'remap_' + info['NAME'].values[0] + f'_{i}.nc')
         if not interp_file.is_file():
             sst_interp.to_netcdf(interp_file, encoding = encoding)
             
         # data slice & concat
         sst_slice = data_slice(sst_interp, info, region, bgning, ending)
+        
         member_store.append(sst_slice)
     
     sst_m = xr.concat(member_store, dim='member')
@@ -117,7 +131,10 @@ if __name__ == '__main__':
     exp_mode = 'ALL'
     #        latS, latN, lonW, lonE
     region = [-30,   30,  120, 280]
-    bgning, ending = '1982-01', '2018-12'
+    # 由于部分模式最早的预测时间是1982-01，故只能选择1983-01作为初始时间合适
+    # 否则会出现切割时间长度不一致的问题，最终导致除了lead time 1之外，
+    # 剩余没有对齐的数据被NaN填充
+    bgning, ending = '1983-01', '2018-12'
     
     data_list = pd.read_excel('./NMME_data_list_new.xlsx', engine='openpyxl')
     
