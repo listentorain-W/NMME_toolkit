@@ -16,6 +16,15 @@ def lead_time_leap(time_array, lead_num = 0):
     
     return new_ts
 
+def data_load(file_path, info, i):
+    sst = xr.open_dataset(file_path + info['NAME'].values[0] + f'_{i}.nc', decode_times = False)['sst']
+    
+    if info['NAME'].values[0] in ['CMC1-CanCM3', 'CMC1-CanCM4']:
+        sst_F = xr.open_dataset(file_path + info['NAME'].values[0] + f'_F_{i}.nc', decode_times = False)['sst']
+        sst = xr.concat([sst, sst_F], dim = 'S')
+        
+    return sst
+
 def coords_rename(ds, df):
     ds = ds.rename({'S': 'start_time',
                     'L': 'lead_time',
@@ -91,6 +100,7 @@ def preprocess(info, file_path, save_path, region, bgning, ending):
     
     member_store = []
     for i in range(1, info['file_num'].values[0] + 1):
+        
         sst = xr.open_dataset(file_path + info['NAME'].values[0] + f'_{i}.nc', decode_times = False)['sst']
         
         # nc data with coordinate
@@ -99,6 +109,7 @@ def preprocess(info, file_path, save_path, region, bgning, ending):
         co_file = pl.Path(save_path + 'origin_' + info['NAME'].values[0] + f'_{i}.nc')
         if not co_file.is_file():
             sst_co.to_netcdf(co_file, encoding=encoding)
+            print(f'{co_file} saved.')
             
         # nc data interp
         # using dask to parallel compute in interp
@@ -108,6 +119,7 @@ def preprocess(info, file_path, save_path, region, bgning, ending):
         interp_file = pl.Path(save_path + 'remap_' + info['NAME'].values[0] + f'_{i}.nc')
         if not interp_file.is_file():
             sst_interp.to_netcdf(interp_file, encoding = encoding)
+            print(f'{interp_file} saved.')
             
         # data slice & concat
         sst_slice = data_slice(sst_interp, info, region, bgning, ending)
@@ -123,6 +135,7 @@ def preprocess(info, file_path, save_path, region, bgning, ending):
                      bgning + '-' + ending + '.nc')
     if not m_file.is_file():
         sst_m.to_netcdf(m_file, encoding = encoding)
+        print(f'{m_file} saved.')
     
     return sst_m
         
